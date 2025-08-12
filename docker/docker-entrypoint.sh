@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+# Load Vault secrets if available (Kubernetes deployment)
+if [ -f "/vault/secrets/n8n-mcp-server.env" ]; then
+    echo "Loading Vault secrets from /vault/secrets/n8n-mcp-server.env"
+    set -a  # automatically export all variables
+    . /vault/secrets/n8n-mcp-server.env
+    set +a  # disable automatic export
+fi
+
 # Load configuration from JSON file if it exists
 if [ -f "/app/config.json" ] && [ -f "/app/docker/parse-config.js" ]; then
     # Use Node.js to generate shell-safe export commands
