@@ -1,7 +1,6 @@
 import type { IncomingHttpHeaders } from 'http';
 
-function mask(value: unknown): string {
-  if (typeof value !== 'string') return '***redacted***';
+function mask(_value?: unknown): string {
   return '***redacted***';
 }
 
@@ -42,4 +41,3 @@ export function sanitizeHeaders(headers: IncomingHttpHeaders): Record<string, un
   }
   return result;
 }
-
