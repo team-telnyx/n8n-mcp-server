@@ -11,6 +11,7 @@ import { N8NDocumentationMCPServer } from './mcp/server';
 import { logger } from './utils/logger';
 import { PROJECT_VERSION } from './utils/version';
 import { isN8nApiConfigured } from './config/n8n-api';
+import { requestContext, RequestContextStore } from './config/request-context';
 import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
@@ -141,7 +142,11 @@ export async function startFixedHTTPServer() {
     const allowedOrigin = process.env.CORS_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    // Allow dynamic n8n config headers
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, Accept, X-N8N-API-URL, X-N8N-API-KEY, X-N8N-API-TIMEOUT, X-N8N-API-MAX-RETRIES'
+    );
     res.setHeader('Access-Control-Max-Age', '86400');
     
     if (req.method === 'OPTIONS') {
@@ -328,19 +333,45 @@ export async function startFixedHTTPServer() {
     }
     
     try {
-      // Instead of using StreamableHTTPServerTransport, we'll handle the request directly
-      // This avoids the initialization issues with the transport
-      
-      // Collect the raw body
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk.toString();
-      });
-      
-      req.on('end', async () => {
+      // Extract optional per-request n8n config from headers
+      const headerUrl = (req.headers['x-n8n-api-url'] as string | undefined)?.trim();
+      const headerKey = (req.headers['x-n8n-api-key'] as string | undefined)?.trim();
+      const headerTimeoutRaw = (req.headers['x-n8n-api-timeout'] as string | undefined)?.trim();
+      const headerRetriesRaw = (req.headers['x-n8n-api-max-retries'] as string | undefined)?.trim();
+
+      const contextStore: RequestContextStore = {};
+      if (headerUrl && headerKey) {
+        // Basic URL validation: allow only http/https
         try {
-          const jsonRpcRequest = JSON.parse(body);
-          logger.debug('Received JSON-RPC request:', { method: jsonRpcRequest.method });
+          const parsed = new URL(headerUrl);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            throw new Error('Invalid protocol');
+          }
+          const timeout = headerTimeoutRaw ? Number(headerTimeoutRaw) : undefined;
+          const maxRetries = headerRetriesRaw ? Number(headerRetriesRaw) : undefined;
+          contextStore.n8nApi = {
+            baseUrl: headerUrl,
+            apiKey: headerKey,
+            timeout: Number.isFinite(timeout as number) ? timeout : undefined,
+            maxRetries: Number.isFinite(maxRetries as number) ? maxRetries : undefined,
+          };
+        } catch {
+          // If header URL is invalid, ignore override for safety
+        }
+      }
+
+      // Handle request body and JSON-RPC within async-local context so tools can read overrides
+      requestContext.run(contextStore, () => {
+        // Collect the raw body
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk.toString();
+        });
+
+        req.on('end', async () => {
+          try {
+            const jsonRpcRequest = JSON.parse(body);
+            logger.debug('Received JSON-RPC request:', { method: jsonRpcRequest.method });
           
           // Handle the request based on method
           let response;
@@ -443,18 +474,19 @@ export async function startFixedHTTPServer() {
             duration,
             method: jsonRpcRequest.method 
           });
-        } catch (error) {
-          logger.error('Error processing request:', error);
-          res.status(400).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32700,
-              message: 'Parse error',
-              data: error instanceof Error ? error.message : 'Unknown error'
-            },
-            id: null
-          });
-        }
+          } catch (error) {
+            logger.error('Error processing request:', error);
+            res.status(400).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32700,
+                message: 'Parse error',
+                data: error instanceof Error ? error.message : 'Unknown error'
+              },
+              id: null
+            });
+          }
+        });
       });
     } catch (error) {
       logger.error('MCP request error:', error);

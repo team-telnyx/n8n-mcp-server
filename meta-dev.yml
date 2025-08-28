@@ -43,3 +43,4 @@ deploy:
       - NODE_ENV
       - PORT
       - REBUILD_ON_START
+      - N8N_API_HEADERS_ONLY

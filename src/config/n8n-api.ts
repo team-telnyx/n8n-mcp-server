@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import { logger } from '../utils/logger';
+import { getN8nApiOverride } from './request-context';
 
 // n8n API configuration schema
 const n8nApiConfigSchema = z.object({
@@ -15,7 +16,24 @@ let envLoaded = false;
 
 // Parse and validate n8n API configuration
 export function getN8nApiConfig() {
-  // Load environment variables on first access
+  
+  // First, prefer any per-request override from the async-local context
+  const override = getN8nApiOverride();
+  if (override && override.baseUrl && override.apiKey) {
+    return {
+      baseUrl: override.baseUrl,
+      apiKey: override.apiKey,
+      timeout: override.timeout ?? 30000,
+      maxRetries: override.maxRetries ?? 3,
+    } as const;
+  }
+
+  // If headers-only mode is enabled, never use env fallback
+  if (process.env.N8N_API_HEADERS_ONLY === 'true') {
+    return null;
+  }
+
+  // Load environment variables on first access (only if not headers-only)
   if (!envLoaded) {
     dotenv.config();
     envLoaded = true;
