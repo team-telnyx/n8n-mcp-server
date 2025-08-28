@@ -15,12 +15,14 @@ import dotenv from 'dotenv';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
 import { PROJECT_VERSION } from './utils/version';
 import { v4 as uuidv4 } from 'uuid';
+import { sanitizeHeaders } from './utils/request-log';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { 
   negotiateProtocolVersion, 
   logProtocolNegotiation,
   STANDARD_PROTOCOL_VERSION 
 } from './utils/protocol-version';
+import { requestContext, RequestContextStore } from './config/request-context';
 
 dotenv.config();
 
@@ -576,7 +578,10 @@ export class SingleSessionHTTPServer {
       const allowedOrigin = process.env.CORS_ORIGIN || '*';
       res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
       res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, Accept, Mcp-Session-Id, X-N8N-API-URL, X-N8N-API-KEY, X-N8N-API-TIMEOUT, X-N8N-API-MAX-RETRIES'
+      );
       res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
       res.setHeader('Access-Control-Max-Age', '86400');
       
@@ -865,7 +870,7 @@ export class SingleSessionHTTPServer {
     app.post('/mcp', jsonParser, async (req: express.Request, res: express.Response): Promise<void> => {
       // Log comprehensive debug info about the request
       logger.info('POST /mcp request received - DETAILED DEBUG', {
-        headers: req.headers,
+        headers: sanitizeHeaders(req.headers),
         readable: req.readable,
         readableEnded: req.readableEnded,
         complete: req.complete,
@@ -979,7 +984,34 @@ export class SingleSessionHTTPServer {
         sessionInitialized: this.session?.initialized
       });
       
-      await this.handleRequest(req, res);
+      // Extract optional per-request n8n config from headers
+      const headerUrl = (req.headers['x-n8n-api-url'] as string | undefined)?.trim();
+      const headerKey = (req.headers['x-n8n-api-key'] as string | undefined)?.trim();
+      const headerTimeoutRaw = (req.headers['x-n8n-api-timeout'] as string | undefined)?.trim();
+      const headerRetriesRaw = (req.headers['x-n8n-api-max-retries'] as string | undefined)?.trim();
+
+      const contextStore: RequestContextStore = {};
+      if (headerUrl && headerKey) {
+        try {
+          const parsed = new URL(headerUrl);
+          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            const timeout = headerTimeoutRaw ? Number(headerTimeoutRaw) : undefined;
+            const maxRetries = headerRetriesRaw ? Number(headerRetriesRaw) : undefined;
+            contextStore.n8nApi = {
+              baseUrl: headerUrl,
+              apiKey: headerKey,
+              timeout: Number.isFinite(timeout as number) ? timeout : undefined,
+              maxRetries: Number.isFinite(maxRetries as number) ? maxRetries : undefined,
+            };
+          }
+        } catch {
+          // Ignore invalid URL
+        }
+      }
+
+      await requestContext.run(contextStore, async () => {
+        await this.handleRequest(req, res);
+      });
       
       logger.info('POST /mcp request completed - checking response status', {
         responseHeadersSent: res.headersSent,

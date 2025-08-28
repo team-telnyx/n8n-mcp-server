@@ -617,6 +617,36 @@ npm start          # stdio mode for Claude Desktop
 npm run start:http # HTTP mode for remote access
 ```
 
+### HTTP Headers: Dynamic n8n Config
+
+When running in HTTP mode, you can pass per-request n8n API credentials via headers. This lets each client target its own n8n instance without changing server env vars.
+
+- Headers: `X-N8N-API-URL`, `X-N8N-API-KEY` (optional: `X-N8N-API-TIMEOUT`, `X-N8N-API-MAX-RETRIES`)
+- Auth: still use `Authorization: Bearer <AUTH_TOKEN>` for the MCP server itself
+
+Example Claude Desktop HTTP configuration:
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp-server": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_TOKEN",
+        "X-N8N-API-URL": "https://your-n8n-instance.com",
+        "X-N8N-API-KEY": "your_n8n_api_key"
+      }
+    }
+  }
+}
+```
+
+Notes:
+- Only the HTTP request that includes these headers gains n8n management tools.
+- If headers are omitted, the server falls back to `N8N_API_URL`/`N8N_API_KEY` env vars (if set). To disable this fallback entirely, set `N8N_API_HEADERS_ONLY=true` in the server environment.
+- CORS is configured to allow these headers.
+
 ### Development Commands
 
 ```bash
