@@ -29,7 +29,7 @@ deploy:
   k8s_clusters: ["backend-ch1-prod"]
   node_profile: generic
   secrets_from: file
-  instances: 2
+  instances: 1
   service:
     - name: n8n-mcp-server
       port: 3000
